@@ -891,5 +891,19 @@ sb.auth.onAuthStateChange((event, session) => {
 })();
 
 if ('serviceWorker' in navigator) {
-  window.addEventListener('load', () => { navigator.serviceWorker.register('sw.js').catch(() => { /* offline shell unavailable */ }); });
+  const hadController = !!navigator.serviceWorker.controller;
+  let reloaded = false;
+  // When a new version of the app takes over, reload once so the new code runs.
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (!hadController || reloaded || S.cart.length || S.busy) return;
+    reloaded = true; location.reload();
+  });
+  window.addEventListener('load', () => {
+    navigator.serviceWorker.register('sw.js', { updateViaCache: 'none' })
+      .then((reg) => {
+        reg.update();
+        document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') reg.update(); });
+      })
+      .catch(() => { /* offline shell unavailable */ });
+  });
 }

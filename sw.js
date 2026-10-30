@@ -1,6 +1,6 @@
 // Beach Kitchen service worker: keeps the app shell available offline.
 // Data (orders, menu) always goes straight to Supabase and is never cached here.
-const VERSION = 'bk-v5';
+const VERSION = 'bk-v6';
 const SHELL = [
   './',
   './index.html',
@@ -14,7 +14,9 @@ const SHELL = [
 const CDN = 'https://cdn.jsdelivr.net/';
 
 self.addEventListener('install', (e) => {
-  e.waitUntil(caches.open(VERSION).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(VERSION)
+    .then((c) => c.addAll(SHELL.map((u) => new Request(u, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', (e) => {
@@ -35,9 +37,10 @@ self.addEventListener('fetch', (e) => {
   if (!sameOrigin && !isLib && !isFont) return; // Supabase API etc: network only
 
   if (sameOrigin) {
-    // Network first so updates arrive; fall back to cache when offline.
+    // Network first, skipping the browser's HTTP cache (GitHub Pages sets max-age=600),
+    // so updates arrive on the next open; fall back to our cache when offline.
     e.respondWith(
-      fetch(req).then((res) => {
+      fetch(req, { cache: 'no-cache' }).then((res) => {
         const copy = res.clone();
         caches.open(VERSION).then((c) => c.put(req, copy));
         return res;
