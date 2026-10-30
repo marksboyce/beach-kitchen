@@ -47,6 +47,8 @@ function errText(e) {
     REASON_REQUIRED: 'Please give a reason.',
     EMPTY_ORDER: 'The order is empty.',
     BAD_COUNT: 'Enter the cash counted.',
+    DISCOUNT_REASON_REQUIRED: 'Give a reason for the discount.',
+    BAD_DISCOUNT: 'The discount is more than the order total.',
     'Invalid login credentials': 'Wrong email or password.',
     'Email not confirmed': 'Please confirm your email first — check your inbox.'
   };
@@ -70,13 +72,13 @@ const S = {
   view: 'counter', cats: [], items: [], staff: [],
   settings: { late_on: false, late_min: 8, default_float: 100 },
   shift: undefined, cart: [], sides: null,
-  pay: { method: 'cash', tendered: null, other: false, custom: '' },
+  pay: { method: 'cash', tendered: null, other: false, custom: '', name: '', discOpen: false, discMode: null, discPct: null, discAmt: '', discReason: '' },
   tickets: [], seenTickets: new Set(), now: Date.now(),
   todayDate: null, today: null, todayOrders: [], voidFor: null, voidReason: '',
   closeForm: { counted: '', reason: '' }, floatInput: '',
   newItem: { name: '', price: '', cost: '', cat: 'grill', sides: false },
   newStaff: { email: '', name: '', role: 'counter' },
-  removeFor: null, account: false, pw: '',
+  removeFor: null, account: false, pw: '', soldOut: false,
   auth: { mode: 'signin', email: '', password: '', msg: '', err: false },
   toast: null, busy: false, live: false, online: navigator.onLine,
   outbox: loadJSON(OUTBOX_KEY), failed: loadJSON(FAILED_KEY),
@@ -132,10 +134,17 @@ function view() {
     case 'menu': main = adminView(); break;
     default: main = '';
   }
-  return main + (S.sides ? sidesSheet() : '') + (S.account ? accountSheet() : '') + tabsView() + toastView();
+  return main + (S.sides ? sidesSheet() : '') + (S.account ? accountSheet() : '') + (S.soldOut ? soldOutSheet() : '') + tabsView() + toastView();
 }
 
 const signOutLink = () => '';
+function soldOutSheet() {
+  return `<div class="sheet-wrap" data-act="soldOutBackdrop"><section class="sheet" aria-label="Sold out items" style="color:var(--ink);">
+    <div class="row"><h1>Sold out today</h1><button class="icon-btn" style="background:var(--ground);color:var(--ink);" data-act="closeSoldOut" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <p class="muted" style="margin:0;">Tap an item to mark it sold out. The counter sees it straight away.</p>
+    ${S.cats.map((c) => { const its = S.items.filter((i) => i.category_id === c.id); return its.length ? `<p class="label">${esc(c.label)}</p>${its.map((i) => `<div class="row"><span style="font-size:16px;font-weight:600;">${esc(i.name)}</span><button class="switch${i.available ? '' : ' on'}" style="min-width:96px;" data-act="kitchenAvail" data-arg="${i.id}">${i.available ? 'Available' : 'Sold out'}</button></div>`).join('')}` : ''; }).join('')}
+  </section></div>`;
+}
 function accountSheet() {
   return `<div class="sheet-wrap" data-act="accountBackdrop"><section class="sheet" aria-label="Account">
     <div class="row"><h1>Account</h1><button class="icon-btn" style="background:var(--ground);color:var(--ink);" data-act="closeAccount" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
@@ -293,23 +302,50 @@ function sidesSheet() {
 }
 
 // ---------- pay ----------
+function discountValue() {
+  const p = S.pay; const sub = cartTotal();
+  if (p.discMode === 'pct' && p.discPct) return Math.min(sub, Math.round(sub * p.discPct) / 100);
+  if (p.discMode === 'amt') { const a = parseMoney(p.discAmt); return a === null ? 0 : Math.min(sub, a); }
+  return 0;
+}
+function payTotal() { return Math.max(0, Math.round((cartTotal() - discountValue()) * 100) / 100); }
+
 function payView() {
-  const total = cartTotal();
+  const sub = cartTotal();
+  const disc = discountValue();
+  const total = payTotal();
   const p = S.pay;
+  const free = total === 0;
   const isCash = p.method === 'cash';
   const quick = [['Exact', total]];
   [20, 50, 100, 200].forEach((v) => { if (v > total && quick.length < 3) quick.push(['$' + v, v]); });
   const t = tenderedValue();
   const short = t !== null && t < total;
-  const ok = S.cart.length && (!isCash || (t !== null && t >= total)) && !S.busy;
+  const reasonOk = disc === 0 || p.discReason.trim().length > 0;
+  const ok = S.cart.length && reasonOk && (free || !isCash || (t !== null && t >= total)) && !S.busy;
+  const pctChip = (v, label) => `<button class="chip${p.discMode === 'pct' && p.discPct === v ? ' on' : ''}" data-act="discPct" data-arg="${v}">${label}</button>`;
+  const btnLabel = S.busy ? 'Sending…' : !reasonOk ? 'Give a reason for the discount' : free ? 'Record free order — send to kitchen' : ok ? 'Paid — send to kitchen' : isCash ? 'Tap the cash handed over' : 'Paid — send to kitchen';
   return `<header class="top"><div class="top-row" style="justify-content:flex-start;">
       <button class="icon-btn" data-act="go" data-arg="counter" aria-label="Back to order"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M15 6l-6 6 6 6"/></svg></button>
       <h1>Pay</h1></div></header>
-  <div class="body"><div class="pad">
+  <div class="body" id="pay-scroll" data-keep-scroll><div class="pad">
     <section class="card" aria-label="Order summary">
       ${S.cart.map((l) => `<div class="row"><span><b>${l.qty}×</b> ${esc(l.name)}${l.sides && l.sides.length ? `<br><span class="small muted">${esc(l.sides.join(' · '))}</span>` : ''}</span><b>$${num(l.price * l.qty)}</b></div>`).join('')}
+      ${disc > 0 ? `<div class="row" style="border-top:1px solid var(--line);padding-top:8px;"><span>Subtotal</span><span>${money(sub)}</span></div>
+      <div class="row" style="color:var(--danger);font-weight:700;"><span>Discount${p.discMode === 'pct' ? ` (${p.discPct}%)` : ''}</span><span>−${money(disc)}</span></div>` : ''}
       <div class="row" style="border-top:1px solid var(--line);padding-top:8px;font-size:22px;font-weight:800;"><span>Total</span><span>${money(total)}</span></div>
     </section>
+
+    <label class="field">Customer name (optional)<input class="input" id="f-cname" data-bind="pay.name" value="${esc(p.name)}" maxlength="40" autocomplete="off" placeholder="e.g. Sarah — shown to the kitchen"></label>
+
+    ${p.discOpen ? `<section class="card" aria-label="Discount">
+      <div class="row"><h2>Discount or free</h2><button class="link-btn" style="color:var(--danger)" data-act="discClear">Remove</button></div>
+      <div class="chips">${pctChip(10, '10%')}${pctChip(20, '20%')}${pctChip(50, '50%')}${pctChip(100, 'Free')}<button class="chip${p.discMode === 'amt' ? ' on' : ''}" data-act="discAmtMode">$ amount</button></div>
+      ${p.discMode === 'amt' ? `<label class="field">Discount amount ($)<input class="input" id="f-discamt" inputmode="decimal" data-bind="pay.discAmt" data-live value="${esc(p.discAmt)}" placeholder="e.g. 5"></label>` : ''}
+      <label class="field">Reason (required)<input class="input" id="f-discreason" data-bind="pay.discReason" data-live value="${esc(p.discReason)}" maxlength="200" placeholder="e.g. staff meal, bar staff coffee, cold food"></label>
+    </section>` : '<button class="link-btn" style="align-self:flex-start;" data-act="discOpen">Add a discount or make it free</button>'}
+
+    ${free ? `<div class="card" style="font-size:16px;">Free order — nothing to collect. It's recorded with the reason and shows on the daily report.</div>` : `
     <div class="seg" role="radiogroup" aria-label="Payment method">
       <button class="opt${isCash ? ' on' : ''}" role="radio" aria-checked="${isCash}" data-act="method" data-arg="cash">Cash</button>
       <button class="opt${!isCash ? ' on' : ''}" role="radio" aria-checked="${!isCash}" data-act="method" data-arg="card">Card</button>
@@ -322,9 +358,9 @@ function payView() {
       </div>
       ${p.other ? `<label class="field">Amount handed over<input class="input big" id="f-custom" inputmode="decimal" data-bind="pay.custom" data-live value="${esc(p.custom)}" placeholder="e.g. 65"></label>` : ''}
       <div class="change${short ? ' short' : ''}"><span>${short ? 'Not enough — still owed' : 'Change to give'}</span><span>${t === null ? '—' : money(Math.abs(t - total))}</span></div>`
-    : `<div class="card" style="font-size:16px;">Take <b>${money(total)}</b> on the bank card machine. When it's approved, tap the button below.</div>`}
+    : `<div class="card" style="font-size:16px;">Take <b>${money(total)}</b> on the bank card machine. When it's approved, tap the button below.</div>`}`}
   </div></div>
-  <div class="foot"><button class="btn" data-act="submitOrder" ${ok ? '' : 'disabled'}>${S.busy ? 'Sending…' : ok ? 'Paid — send to kitchen' : isCash ? 'Tap the cash handed over' : 'Paid — send to kitchen'}</button></div>`;
+  <div class="foot"><button class="btn" data-act="submitOrder" ${ok ? '' : 'disabled'}>${btnLabel}</button></div>`;
 }
 
 // ---------- kitchen ----------
@@ -334,6 +370,7 @@ function kitchenView() {
   return `<header class="top" style="border-bottom:1px solid #263537;"><div class="top-row"><h1>Kitchen</h1>${livePill()}</div>
     <div class="top-row"><p>${S.tickets.length ? `${S.tickets.length} waiting · oldest first` : 'Nothing waiting'}</p>
       <span style="display:flex;gap:12px;">
+        <button class="link-btn" data-act="openSoldOut">Sold out…</button>
         <button class="link-btn" data-act="toggleSound">${S.soundOn ? 'Sound on' : 'Turn sound on'}</button>
         ${'wakeLock' in navigator ? `<button class="link-btn" data-act="toggleWake">${S.wakeLock ? 'Screen stays on' : 'Keep screen on'}</button>` : ''}
       </span></div>
@@ -344,7 +381,7 @@ function kitchenView() {
       const isLate = late !== null && mins >= late;
       const isNew = mins < 1;
       return `<article class="ticket${isLate ? ' late' : ''}">
-        <div class="th"><b>${pad3(o.number)}${isNew ? '<span class="new-badge">NEW</span>' : ''}</b><span>${mins < 1 ? 'just now' : mins + ' min'}</span></div>
+        <div class="th"><b>${pad3(o.number)}${o.customer_name ? ` · ${esc(o.customer_name)}` : ''}${isNew ? '<span class="new-badge">NEW</span>' : ''}</b><span>${mins < 1 ? 'just now' : mins + ' min'}</span></div>
         <div class="tb">
           ${(o.order_lines || []).map((l) => `<p class="ln">${l.qty}× ${esc(l.name)}</p>${l.sides && l.sides.length ? `<p class="sub">+ ${esc(l.sides.join(' · + '))}</p>` : ''}${l.note ? `<p class="note">Note: ${esc(l.note)}</p>` : ''}`).join('')}
           <button class="btn dark" style="margin-top:6px;" data-act="done" data-arg="${o.id}">Done — ready to collect</button>
@@ -401,7 +438,7 @@ function todayView() {
   <div class="body" id="today-scroll" data-keep-scroll><div class="pad">
     ${!t ? '<p class="muted">Loading…</p>' : `
     <div class="card" style="gap:2px;"><span class="muted" style="font-weight:600;">Takings</span><span class="big">${money(t.takings)}</span>
-      <span class="small muted">${t.orders} orders${t.orders ? ' · average ' + money(t.takings / t.orders) : ''}${t.voids ? ` · ${t.voids} voided (${money(t.void_total)})` : ''}</span></div>
+      <span class="small muted">${t.orders} orders${t.orders ? ' · average ' + money(t.takings / t.orders) : ''}${t.voids ? ` · ${t.voids} voided (${money(t.void_total)})` : ''}${t.discounts > 0 ? ` · discounts ${money(t.discounts)}${t.comps ? ` incl. ${t.comps} free` : ''}` : ''}</span></div>
     <div class="tiles">
       <div class="tile"><span>Cash</span><b>${moneyShort(t.cash)}</b></div>
       <div class="tile"><span>Card</span><b>${moneyShort(t.card)}</b></div>
@@ -494,7 +531,7 @@ async function loadShift() {
   if (error) return;
   S.shift = data || null;
   if (S.shift && S.me && S.me.role !== 'kitchen') {
-    const r = await sb.from('orders').select('id, number, created_at, total, payment_method, status, void_reason')
+    const r = await sb.from('orders').select('id, number, created_at, total, payment_method, status, void_reason, customer_name, discount, discount_reason')
       .eq('shift_id', S.shift.id).order('created_at', { ascending: false }).limit(200);
     if (!r.error) S.shiftOrders = r.data;
   } else S.shiftOrders = [];
@@ -502,13 +539,13 @@ async function loadShift() {
 function orderRows(list) {
   const canVoid = S.me && ['admin', 'counter'].includes(S.me.role);
   return list.map((o) => `
-      <div class="orow${o.status === 'void' ? ' void' : ''}"><span><b>${pad3(o.number)}</b> · ${bbTime(o.created_at)} · ${o.payment_method}${o.status === 'void' && o.void_reason ? ` · void: ${esc(o.void_reason)}` : ''}</span>
+      <div class="orow${o.status === 'void' ? ' void' : ''}"><span><b>${pad3(o.number)}</b>${o.customer_name ? ' ' + esc(o.customer_name) : ''} · ${bbTime(o.created_at)} · ${o.payment_method === 'comp' ? 'free' : o.payment_method}${Number(o.discount) > 0 ? ` · −${money(o.discount)} (${esc(o.discount_reason || '')})` : ''}${o.status === 'void' && o.void_reason ? ` · void: ${esc(o.void_reason)}` : ''}</span>
         <span style="display:flex;align-items:center;gap:8px;"><b>${money(o.total)}</b>${canVoid && o.status !== 'void' ? `<button class="link-btn" style="color:var(--danger)" data-act="voidStart" data-arg="${o.id}">Void</button>` : ''}</span></div>
       ${S.voidFor === o.id ? `<div style="display:flex;gap:8px;"><input class="input" id="f-void" data-bind="voidReason" value="${esc(S.voidReason)}" placeholder="Reason, e.g. customer cancelled"><button class="btn warn sm" data-act="voidConfirm" data-arg="${o.id}">Void</button></div>` : ''}`).join('');
 }
 async function loadTickets() {
   const { data, error } = await sb.from('orders')
-    .select('id, number, created_at, order_lines(line_no, name, qty, sides, note)')
+    .select('id, number, created_at, customer_name, order_lines(line_no, name, qty, sides, note)')
     .eq('status', 'new').order('created_at');
   if (error) return;
   const fresh = data.map((o) => ({ ...o, order_lines: (o.order_lines || []).sort((a, b) => a.line_no - b.line_no) }));
@@ -522,11 +559,11 @@ async function loadToday() {
   const d = S.todayDate || bbDate();
   const [sum, list] = await Promise.all([
     sb.rpc('day_summary', { p_date: d }),
-    sb.from('orders').select('id, number, created_at, total, payment_method, status, void_reason').eq('business_date', d).order('created_at', { ascending: false }).limit(100)
+    sb.from('orders').select('id, number, created_at, total, payment_method, status, void_reason, customer_name, discount, discount_reason').eq('business_date', d).order('created_at', { ascending: false }).limit(100)
   ]);
   if (!sum.error && sum.data) {
     const t = sum.data;
-    S.today = { ...t, takings: Number(t.takings), cash: Number(t.cash), card: Number(t.card), void_total: Number(t.void_total), food_cost: Number(t.food_cost), cash_gap: t.cash_gap === null ? null : Number(t.cash_gap), best: t.best || [], by_hour: t.by_hour || [] };
+    S.today = { ...t, takings: Number(t.takings), cash: Number(t.cash), card: Number(t.card), void_total: Number(t.void_total), discounts: Number(t.discounts || 0), comps: Number(t.comps || 0), food_cost: Number(t.food_cost), cash_gap: t.cash_gap === null ? null : Number(t.cash_gap), best: t.best || [], by_hour: t.by_hour || [] };
   }
   if (!list.error) S.todayOrders = list.data;
 }
@@ -665,6 +702,15 @@ const ACT = {
     await boot(); toast('Password saved');
   },
   signOut: async () => { S.account = false; await sb.auth.signOut(); S.me = null; S.session = null; S.cart = []; render(); },
+  openSoldOut: async () => { S.soldOut = true; await loadMenu(); render(); },
+  closeSoldOut: () => { S.soldOut = false; render(); },
+  soldOutBackdrop: (_, el, e) => { if (e.target === el) { S.soldOut = false; render(); } },
+  kitchenAvail: async (id) => {
+    const it = itemById(id); if (!it) return;
+    const { error } = await sb.rpc('set_item_available', { p_item: id, p_available: !it.available });
+    if (error) { toast(errText(error), true); return; }
+    await loadMenu(); toast(it.available ? `${it.name} marked sold out` : `${it.name} back on`);
+  },
   openAccount: () => { S.account = true; S.pw = ''; render(); },
   closeAccount: () => { S.account = false; S.pw = ''; render(); },
   accountBackdrop: (_, el, e) => { if (e.target === el) { S.account = false; S.pw = ''; render(); } },
@@ -723,18 +769,27 @@ const ACT = {
   linePlus: (key) => { const l = S.cart.find((x) => x.key === key); if (l && l.qty < 99) l.qty += 1; render(); },
   lineMinus: (key) => { const l = S.cart.find((x) => x.key === key); if (!l) return; l.qty -= 1; if (l.qty <= 0) S.cart = S.cart.filter((x) => x.key !== key); render(); },
   clearCart: () => { S.cart = []; render(); },
-  goPay: () => { S.pay = { method: 'cash', tendered: null, other: false, custom: '' }; S.view = 'pay'; render(); },
+  goPay: () => { S.pay = { method: 'cash', tendered: null, other: false, custom: '', name: '', discOpen: false, discMode: null, discPct: null, discAmt: '', discReason: '' }; S.view = 'pay'; render(); },
   method: (m) => { S.pay.method = m; if (m === 'card') { S.pay.tendered = null; S.pay.other = false; S.pay.custom = ''; } render(); },
   tender: (v) => { S.pay.tendered = Number(v); S.pay.other = false; render(); },
   tenderOther: () => { S.pay.other = true; S.pay.tendered = null; render(); setTimeout(() => document.getElementById('f-custom')?.focus(), 0); },
+  discOpen: () => { S.pay.discOpen = true; render(); },
+  discClear: () => { Object.assign(S.pay, { discOpen: false, discMode: null, discPct: null, discAmt: '', discReason: '', tendered: null }); render(); },
+  discPct: (v) => { Object.assign(S.pay, { discMode: 'pct', discPct: Number(v), tendered: null }); render(); },
+  discAmtMode: () => { Object.assign(S.pay, { discMode: 'amt', discPct: null, tendered: null }); render(); setTimeout(() => document.getElementById('f-discamt')?.focus(), 0); },
   submitOrder: async () => {
-    const total = cartTotal(); const isCash = S.pay.method === 'cash'; const t = tenderedValue();
-    if (!S.cart.length || (isCash && (t === null || t < total)) || S.busy) return;
+    const total = payTotal(); const disc = discountValue(); const free = total === 0;
+    const isCash = !free && S.pay.method === 'cash'; const t = tenderedValue();
+    if (!S.cart.length || S.busy) return;
+    if (disc > 0 && !S.pay.discReason.trim()) return;
+    if (isCash && (t === null || t < total)) return;
+    const name = S.pay.name.trim();
     const payload = {
-      p_id: crypto.randomUUID(), p_method: S.pay.method, p_tendered: isCash ? t : null,
-      p_lines: S.cart.map((l) => ({ item_id: l.item_id, qty: l.qty, sides: l.sides, note: l.note }))
+      p_id: crypto.randomUUID(), p_method: free ? 'cash' : S.pay.method, p_tendered: isCash ? t : null,
+      p_lines: S.cart.map((l) => ({ item_id: l.item_id, qty: l.qty, sides: l.sides, note: l.note })),
+      p_customer: name || null, p_discount: disc, p_discount_reason: disc > 0 ? S.pay.discReason.trim() : null
     };
-    const summary = S.cart.map((l) => `${l.qty}× ${l.name}`).join(', ');
+    const summary = (name ? name + ': ' : '') + S.cart.map((l) => `${l.qty}× ${l.name}`).join(', ');
     S.busy = true; render();
     const { data, error } = await sb.rpc('place_order', payload);
     S.busy = false;
@@ -746,7 +801,7 @@ const ACT = {
     }
     if (error) { toast(errText(error), true); render(); return; }
     S.cart = []; S.view = 'counter';
-    toast(`Order ${pad3(data.number)} sent to kitchen · ${money(data.total)}${isCash && t > total ? ` · change ${money(t - total)}` : ''}`);
+    toast(`Order ${pad3(data.number)}${name ? ' for ' + name : ''} sent to kitchen · ${free ? 'free' : money(data.total)}${isCash && t > total ? ` · change ${money(t - total)}` : ''}`);
     loadShift().then(render);
   },
   dismissFailed: (i) => { S.failed.splice(Number(i), 1); saveJSON(FAILED_KEY, S.failed); render(); },
