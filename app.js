@@ -378,6 +378,8 @@ function closeView() {
     ${diff !== null ? `<div class="diff ${diff === 0 ? 'ok' : 'bad'}"><span>${diff === 0 ? 'Balanced' : diff < 0 ? 'Short by' : 'Over by'}</span><b>${money(Math.abs(diff))}</b></div>` : ''}
     ${needReason ? `<label class="field">Reason (needed if over or short)<input class="input" id="f-reason" data-bind="closeForm.reason" data-live value="${esc(S.closeForm.reason)}" placeholder="e.g. wrong change on order #022"></label>` : ''}
     <div class="row small muted"><span>Card sales (check against the bank machine)</span><b style="color:var(--ink)">${money(sh.card_sales)}</b></div>
+    <div class="card"><h2>This shift's orders</h2><p class="small muted" style="margin:0;">Void an order here if it was cancelled or rung up by mistake. Voids are recorded with your name and reason.</p>
+      ${(S.shiftOrders || []).length ? `<div class="olist">${orderRows(S.shiftOrders)}</div>` : '<p class="muted" style="margin:0;">No orders yet this shift.</p>'}</div>
   </div></div>
   <div class="foot"><button class="btn" data-act="closeShift" ${can ? '' : 'disabled'}>Close shift</button></div>`;
 }
@@ -409,10 +411,7 @@ function todayView() {
     ${t.food_cost > 0 ? `<div class="card"><div class="row"><span>Food cost (from item costs)</span><b>${money(t.food_cost)}</b></div><div class="row"><span>Gross margin</span><b>${money(margin)} · ${Math.round((margin / t.takings) * 100)}%</b></div></div>` : ''}
     ${t.by_hour.length ? `<div class="card"><h2>Orders by hour</h2><div class="bars">${t.by_hour.map((h) => `<div class="bar"><i style="height:${Math.max(4, Math.round((h.orders / maxHourVal) * 72))}px"></i><small>${h.hour % 12 || 12}${h.hour < 12 ? 'a' : 'p'}</small></div>`).join('')}</div></div>` : ''}
     ${t.best.length ? `<div class="card"><h2>Best sellers</h2>${t.best.map((b) => `<div class="row"><span>${esc(b.name)}</span><b>${b.qty} · ${moneyShort(b.value)}</b></div>`).join('')}</div>` : ''}
-    <div class="card"><h2>Orders</h2>${S.todayOrders.length ? `<div class="olist">${S.todayOrders.map((o) => `
-      <div class="orow${o.status === 'void' ? ' void' : ''}"><span><b>${pad3(o.number)}</b> · ${bbTime(o.created_at)} · ${o.payment_method}${o.status === 'void' && o.void_reason ? ` · void: ${esc(o.void_reason)}` : ''}</span>
-        <span style="display:flex;align-items:center;gap:8px;"><b>${money(o.total)}</b>${isAdmin && o.status !== 'void' ? `<button class="link-btn" style="color:var(--danger)" data-act="voidStart" data-arg="${o.id}">Void</button>` : ''}</span></div>
-      ${S.voidFor === o.id ? `<div style="display:flex;gap:8px;"><input class="input" id="f-void" data-bind="voidReason" value="${esc(S.voidReason)}" placeholder="Reason, e.g. customer cancelled"><button class="btn warn sm" data-act="voidConfirm" data-arg="${o.id}">Void</button></div>` : ''}`).join('')}</div>` : '<p class="muted" style="margin:0;">No orders yet.</p>'}</div>`}
+    <div class="card"><h2>Orders</h2>${S.todayOrders.length ? `<div class="olist">${orderRows(S.todayOrders)}</div>` : '<p class="muted" style="margin:0;">No orders yet.</p>'}</div>`}
     <div class="card"><div class="row"><span class="small muted">Signed in as ${esc(S.session.user.email)}</span><button class="link-btn" data-act="openAccount">Account</button></div>${installButton()}</div>
   </div></div>`;
 }
@@ -493,7 +492,20 @@ async function loadStaff() {
 }
 async function loadShift() {
   const { data, error } = await sb.rpc('current_shift');
-  if (!error) S.shift = data || null;
+  if (error) return;
+  S.shift = data || null;
+  if (S.shift && S.me && S.me.role !== 'kitchen') {
+    const r = await sb.from('orders').select('id, number, created_at, total, payment_method, status, void_reason')
+      .eq('shift_id', S.shift.id).order('created_at', { ascending: false }).limit(200);
+    if (!r.error) S.shiftOrders = r.data;
+  } else S.shiftOrders = [];
+}
+function orderRows(list) {
+  const canVoid = S.me && ['admin', 'counter'].includes(S.me.role);
+  return list.map((o) => `
+      <div class="orow${o.status === 'void' ? ' void' : ''}"><span><b>${pad3(o.number)}</b> · ${bbTime(o.created_at)} · ${o.payment_method}${o.status === 'void' && o.void_reason ? ` · void: ${esc(o.void_reason)}` : ''}</span>
+        <span style="display:flex;align-items:center;gap:8px;"><b>${money(o.total)}</b>${canVoid && o.status !== 'void' ? `<button class="link-btn" style="color:var(--danger)" data-act="voidStart" data-arg="${o.id}">Void</button>` : ''}</span></div>
+      ${S.voidFor === o.id ? `<div style="display:flex;gap:8px;"><input class="input" id="f-void" data-bind="voidReason" value="${esc(S.voidReason)}" placeholder="Reason, e.g. customer cancelled"><button class="btn warn sm" data-act="voidConfirm" data-arg="${o.id}">Void</button></div>` : ''}`).join('');
 }
 async function loadTickets() {
   const { data, error } = await sb.from('orders')
