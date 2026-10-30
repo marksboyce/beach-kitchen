@@ -411,7 +411,7 @@ function todayView() {
     ${t.by_hour.length ? `<div class="card"><h2>Orders by hour</h2><div class="bars">${t.by_hour.map((h) => `<div class="bar"><i style="height:${Math.max(4, Math.round((h.orders / maxHourVal) * 72))}px"></i><small>${h.hour % 12 || 12}${h.hour < 12 ? 'a' : 'p'}</small></div>`).join('')}</div></div>` : ''}
     ${t.best.length ? `<div class="card"><h2>Best sellers</h2>${t.best.map((b) => `<div class="row"><span>${esc(b.name)}</span><b>${b.qty} · ${moneyShort(b.value)}</b></div>`).join('')}</div>` : ''}
     <div class="card"><h2>Orders</h2>${S.todayOrders.length ? `<div class="olist">${orderRows(S.todayOrders)}</div>` : '<p class="muted" style="margin:0;">No orders yet.</p>'}</div>`}
-    <div class="card"><div class="row"><span class="small muted">Signed in as ${esc(S.session.user.email)}</span><button class="link-btn" data-act="openAccount">Account</button></div>${installButton()}</div>
+    ${installButton() ? `<div class="card">${installButton()}</div>` : ''}
   </div></div>`;
 }
 
