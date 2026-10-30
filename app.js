@@ -20,6 +20,19 @@ const bbDate = (d = new Date()) => new Intl.DateTimeFormat('en-CA', { timeZone: 
 const bbTime = (iso) => new Intl.DateTimeFormat('en-US', { timeZone: 'America/Barbados', hour: 'numeric', minute: '2-digit' }).format(new Date(iso));
 const prettyDate = (ymd) => { const [y, m, d] = ymd.split('-').map(Number); return new Date(Date.UTC(y, m - 1, d, 12)).toLocaleDateString('en-GB', { weekday: 'short', day: 'numeric', month: 'short', timeZone: 'UTC' }); };
 const shiftDate = (ymd, days) => { const [y, m, d] = ymd.split('-').map(Number); const t = new Date(Date.UTC(y, m - 1, d + days, 12)); return t.toISOString().slice(0, 10); };
+const CAT_COLOURS = {
+  grill: ['#E8603C', '#FDE6DD', '#A63A1A', '#F6B9A6'],
+  bfast: ['#F2A900', '#FFF3CC', '#7A5300', '#F5D77A'],
+  bites: ['#D6336C', '#FCE3EC', '#A21C50', '#F2AECA'],
+  sides: ['#2F9E44', '#E1F5E4', '#1F6B2F', '#A9DDB3'],
+  drinks: ['#1C7ED6', '#E1EFFC', '#145EA8', '#A9CDF2']
+};
+const CAT_CYCLE = Object.values(CAT_COLOURS);
+function catVars(id) {
+  const i = S.cats.findIndex((c) => c.id === id);
+  const [c, ct, ci, cb] = CAT_COLOURS[id] || CAT_CYCLE[(i < 0 ? 0 : i) % CAT_CYCLE.length];
+  return `--c:${c};--ct:${ct};--ci:${ci};--cb:${cb};`;
+}
 const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
 const isStandalone = matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 
@@ -250,11 +263,11 @@ function counterView() {
   return `<header class="top"><div class="top-row"><h1>Counter</h1>${livePill()}</div>
     <p>Shift open · ${esc(S.me.name)}</p></header>
   <nav class="secnav" id="sec-nav" data-keep-scroll aria-label="Menu sections">
-    ${cats.map((c) => `<button class="chip${c.id === S.activeSec ? ' on' : ''}" id="chip-${c.id}" data-act="jump" data-arg="${c.id}">${esc(c.label)}</button>`).join('')}
+    ${cats.map((c) => `<button class="chip${c.id === S.activeSec ? ' on' : ''}" style="${catVars(c.id)}" id="chip-${c.id}" data-act="jump" data-arg="${c.id}">${esc(c.label)}</button>`).join('')}
   </nav>
   <div class="body menu" id="menu-scroll" data-keep-scroll>
     ${banners ? `<div style="display:flex;flex-direction:column;gap:8px;margin-top:12px;">${banners}</div>` : ''}
-    ${cats.map((c) => `<h2 id="sec-${c.id}">${esc(c.label)}</h2><div class="grid">${S.items.filter((i) => i.category_id === c.id).map(itemButton).join('')}</div>`).join('')}
+    ${cats.map((c) => `<h2 id="sec-${c.id}" style="${catVars(c.id)}">${esc(c.label)}</h2><div class="grid" style="${catVars(c.id)}">${S.items.filter((i) => i.category_id === c.id).map(itemButton).join('')}</div>`).join('')}
   </div>
   <section class="cart" aria-label="This order">
     ${S.cart.length ? `
@@ -347,8 +360,8 @@ function payView() {
 
     ${free ? `<div class="card" style="font-size:16px;">Free order — nothing to collect. It's recorded with the reason and shows on the daily report.</div>` : `
     <div class="seg" role="radiogroup" aria-label="Payment method">
-      <button class="opt${isCash ? ' on' : ''}" role="radio" aria-checked="${isCash}" data-act="method" data-arg="cash">Cash</button>
-      <button class="opt${!isCash ? ' on' : ''}" role="radio" aria-checked="${!isCash}" data-act="method" data-arg="card">Card</button>
+      <button class="opt cash${isCash ? ' on' : ''}" role="radio" aria-checked="${isCash}" data-act="method" data-arg="cash">Cash</button>
+      <button class="opt card${!isCash ? ' on' : ''}" role="radio" aria-checked="${!isCash}" data-act="method" data-arg="card">Card</button>
     </div>
     ${isCash ? `
       <p class="label">Cash handed over</p>
@@ -440,8 +453,8 @@ function todayView() {
     <div class="card" style="gap:2px;"><span class="muted" style="font-weight:600;">Takings</span><span class="big">${money(t.takings)}</span>
       <span class="small muted">${t.orders} orders${t.orders ? ' · average ' + money(t.takings / t.orders) : ''}${t.voids ? ` · ${t.voids} voided (${money(t.void_total)})` : ''}${t.discounts > 0 ? ` · discounts ${money(t.discounts)}${t.comps ? ` incl. ${t.comps} free` : ''}` : ''}</span></div>
     <div class="tiles">
-      <div class="tile"><span>Cash</span><b>${moneyShort(t.cash)}</b></div>
-      <div class="tile"><span>Card</span><b>${moneyShort(t.card)}</b></div>
+      <div class="tile cash"><span>Cash</span><b>${moneyShort(t.cash)}</b></div>
+      <div class="tile card"><span>Card</span><b>${moneyShort(t.card)}</b></div>
       <div class="tile${gap ? ' bad' : ''}"><span>Cash gap</span><b>${gap === null ? 'not closed' : gap === 0 ? '$0' : (gap < 0 ? '−' : '+') + money(Math.abs(gap))}</b></div>
     </div>
     ${t.food_cost > 0 ? `<div class="card"><div class="row"><span>Food cost (from item costs)</span><b>${money(t.food_cost)}</b></div><div class="row"><span>Gross margin</span><b>${money(margin)} · ${Math.round((margin / t.takings) * 100)}%</b></div></div>` : ''}
