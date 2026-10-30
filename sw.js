@@ -1,6 +1,6 @@
 // Beach Kitchen service worker: keeps the app shell available offline.
 // Data (orders, menu) always goes straight to Supabase and is never cached here.
-const VERSION = 'bk-v4';
+const VERSION = 'bk-v5';
 const SHELL = [
   './',
   './index.html',
