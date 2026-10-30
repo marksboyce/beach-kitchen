@@ -76,7 +76,7 @@ const S = {
   closeForm: { counted: '', reason: '' }, floatInput: '',
   newItem: { name: '', price: '', cost: '', cat: 'grill', sides: false },
   newStaff: { email: '', name: '', role: 'counter' },
-  removeFor: null,
+  removeFor: null, account: false, pw: '',
   auth: { mode: 'signin', email: '', password: '', msg: '', err: false },
   toast: null, busy: false, live: false, online: navigator.onLine,
   outbox: loadJSON(OUTBOX_KEY), failed: loadJSON(FAILED_KEY),
@@ -132,10 +132,19 @@ function view() {
     case 'menu': main = adminView(); break;
     default: main = '';
   }
-  return main + (S.sides ? sidesSheet() : '') + tabsView() + toastView();
+  return main + (S.sides ? sidesSheet() : '') + (S.account ? accountSheet() : '') + tabsView() + toastView();
 }
 
-const signOutLink = () => (views().includes('today') ? '' : '<button class="link-btn" data-act="signOut">Sign out</button>');
+const signOutLink = () => (views().includes('today') ? '' : '<button class="link-btn" data-act="openAccount">Account</button>');
+function accountSheet() {
+  return `<div class="sheet-wrap" data-act="accountBackdrop"><section class="sheet" aria-label="Account">
+    <div class="row"><h1>Account</h1><button class="icon-btn" style="background:var(--ground);color:var(--ink);" data-act="closeAccount" aria-label="Close"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18"/></svg></button></div>
+    <p class="muted" style="margin:0;">Signed in as <b>${esc(S.session.user.email)}</b> (${esc(S.me.role)})</p>
+    <label class="field">New password (8+ characters)<input class="input" id="f-pw" type="password" autocomplete="new-password" data-bind="pw" data-live value="${esc(S.pw)}"></label>
+    <button class="btn" data-act="savePw" ${S.pw.length >= 8 && !S.busy ? '' : 'disabled'}>Change password</button>
+    <button class="btn ghost" data-act="signOut">Sign out</button>
+  </section></div>`;
+}
 const toastView = () => (S.toast ? `<div class="toast${S.toast.err ? ' err' : ''}" role="status">${esc(S.toast.text)}</div>` : '');
 const livePill = () => {
   if (!S.online) return '<span class="pill off">● Offline</span>';
@@ -160,7 +169,7 @@ function authView() {
   return `<div class="auth body">
     <div class="brand"><img src="icons/icon-192.png" alt=""><div><h1>Beach Kitchen</h1><p>Counter &amp; kitchen orders</p></div></div>
     <h2 style="margin:0;font-size:20px;font-weight:800;">${titles[a.mode]}</h2>
-    ${a.mode === 'signup' ? '<p class="muted" style="margin:0;">First time here? Use the email Mark added to the staff list, and choose a password (8+ characters). We\'ll email you a link to confirm it.</p>' : ''}
+    ${a.mode === 'signup' ? '<p class="muted" style="margin:0;">First time here? Use the email on the staff list and choose a password (8+ characters). We\'ll email you a link to confirm it. If no email arrives, ask Mark to set up your login.</p>' : ''}
     ${a.msg ? `<div class="msg${a.err ? ' err' : ''}" role="status">${esc(a.msg)}</div>` : ''}
     <form data-submit="authSubmit" style="display:flex;flex-direction:column;gap:12px;">
       <label class="field">Email<input class="input" id="a-email" type="email" autocomplete="username" inputmode="email" data-bind="auth.email" value="${esc(a.email)}" required></label>
@@ -327,7 +336,7 @@ function kitchenView() {
       <span style="display:flex;gap:12px;">
         <button class="link-btn" data-act="toggleSound">${S.soundOn ? 'Sound on' : 'Turn sound on'}</button>
         ${'wakeLock' in navigator ? `<button class="link-btn" data-act="toggleWake">${S.wakeLock ? 'Screen stays on' : 'Keep screen on'}</button>` : ''}
-        ${solo ? '<button class="link-btn" data-act="signOut">Sign out</button>' : ''}
+        ${solo ? '<button class="link-btn" data-act="openAccount">Account</button>' : ''}
       </span></div>
   </header>
   <div class="body" id="kitchen-scroll" data-keep-scroll><div class="pad">
@@ -404,7 +413,7 @@ function todayView() {
       <div class="orow${o.status === 'void' ? ' void' : ''}"><span><b>${pad3(o.number)}</b> · ${bbTime(o.created_at)} · ${o.payment_method}${o.status === 'void' && o.void_reason ? ` · void: ${esc(o.void_reason)}` : ''}</span>
         <span style="display:flex;align-items:center;gap:8px;"><b>${money(o.total)}</b>${isAdmin && o.status !== 'void' ? `<button class="link-btn" style="color:var(--danger)" data-act="voidStart" data-arg="${o.id}">Void</button>` : ''}</span></div>
       ${S.voidFor === o.id ? `<div style="display:flex;gap:8px;"><input class="input" id="f-void" data-bind="voidReason" value="${esc(S.voidReason)}" placeholder="Reason, e.g. customer cancelled"><button class="btn warn sm" data-act="voidConfirm" data-arg="${o.id}">Void</button></div>` : ''}`).join('')}</div>` : '<p class="muted" style="margin:0;">No orders yet.</p>'}</div>`}
-    <div class="card"><div class="row"><span class="small muted">Signed in as ${esc(S.session.user.email)}</span><button class="link-btn" data-act="signOut">Sign out</button></div>${installButton()}</div>
+    <div class="card"><div class="row"><span class="small muted">Signed in as ${esc(S.session.user.email)}</span><button class="link-btn" data-act="openAccount">Account</button></div>${installButton()}</div>
   </div></div>`;
 }
 
@@ -644,7 +653,18 @@ const ACT = {
     S.auth.password = ''; S.recovering = false; S.auth.msg = '';
     await boot(); toast('Password saved');
   },
-  signOut: async () => { await sb.auth.signOut(); S.me = null; S.session = null; S.cart = []; render(); },
+  signOut: async () => { S.account = false; await sb.auth.signOut(); S.me = null; S.session = null; S.cart = []; render(); },
+  openAccount: () => { S.account = true; S.pw = ''; render(); },
+  closeAccount: () => { S.account = false; S.pw = ''; render(); },
+  accountBackdrop: (_, el, e) => { if (e.target === el) { S.account = false; S.pw = ''; render(); } },
+  savePw: async () => {
+    if (S.pw.length < 8) return;
+    S.busy = true; render();
+    const { error } = await sb.auth.updateUser({ password: S.pw });
+    S.busy = false;
+    if (error) { toast(errText(error), true); return; }
+    S.pw = ''; S.account = false; toast('Password changed');
+  },
   retryMe: async () => { await boot(); },
   install: async () => { if (!S.installEvt) return; S.installEvt.prompt(); await S.installEvt.userChoice; S.installEvt = null; render(); },
 
